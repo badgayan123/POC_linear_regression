@@ -581,8 +581,174 @@ def show_analysis_page():
     
     st.info(f"Numerical features: {analyzer.numerical_features}")
     
-    # Step 4: Train model
-    st.subheader("4. Train Model")
+    # Step 4: Advanced Preprocessing Configuration
+    st.subheader("4. Advanced Preprocessing Configuration")
+    
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 15px; margin: 20px 0; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
+        <h3 style="color: white; margin: 0; text-align: center;">Advanced Data Preprocessing</h3>
+        <p style="color: white; text-align: center; margin: 10px 0 0 0; opacity: 0.9;">Configure scaling, outlier detection, feature selection, and transformations</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Create tabs for different preprocessing options
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Scaling", "Outliers", "Feature Selection", "Transformations", "Feature Engineering"])
+    
+    with tab1:
+        st.markdown("### Scaling Configuration")
+        scaling_method = st.selectbox(
+            "Choose scaling method:",
+            ["standard", "minmax", "robust", "normalizer", "none"],
+            format_func=lambda x: {
+                "standard": "StandardScaler (mean=0, std=1)",
+                "minmax": "MinMaxScaler (0 to 1)",
+                "robust": "RobustScaler (robust to outliers)",
+                "normalizer": "Normalizer (unit norm)",
+                "none": "No scaling"
+            }[x],
+            help="Select how to scale your numerical features"
+        )
+        analyzer.preprocessing_config['scaling_method'] = scaling_method
+        st.info(f"Selected scaling: {scaling_method}")
+    
+    with tab2:
+        st.markdown("### Outlier Detection & Handling")
+        outlier_detection = st.selectbox(
+            "Outlier detection method:",
+            ["none", "iqr", "zscore", "isolation_forest"],
+            format_func=lambda x: {
+                "none": "No outlier detection",
+                "iqr": "IQR method (Q1 - 1.5*IQR, Q3 + 1.5*IQR)",
+                "zscore": "Z-score method (|z| > 3)",
+                "isolation_forest": "Isolation Forest"
+            }[x]
+        )
+        analyzer.preprocessing_config['outlier_detection'] = outlier_detection
+        
+        if outlier_detection != "none":
+            outlier_handling = st.selectbox(
+                "Outlier handling method:",
+                ["remove", "cap", "transform"],
+                format_func=lambda x: {
+                    "remove": "Remove outliers",
+                    "cap": "Cap outliers (winsorize)",
+                    "transform": "Transform outliers (log transform)"
+                }[x]
+            )
+            analyzer.preprocessing_config['outlier_handling'] = outlier_handling
+            st.info(f"Detection: {outlier_detection}, Handling: {outlier_handling}")
+    
+    with tab3:
+        st.markdown("### Feature Selection")
+        feature_selection = st.selectbox(
+            "Feature selection method:",
+            ["none", "variance", "correlation", "kbest", "rfe"],
+            format_func=lambda x: {
+                "none": "No feature selection",
+                "variance": "Variance threshold (remove low variance)",
+                "correlation": "Correlation-based (remove highly correlated)",
+                "kbest": "K-best features (F-statistic)",
+                "rfe": "Recursive Feature Elimination (RFE)"
+            }[x]
+        )
+        analyzer.preprocessing_config['feature_selection'] = feature_selection
+        
+        if feature_selection == "variance":
+            threshold = st.slider("Variance threshold:", 0.0, 0.1, 0.01, 0.001)
+            analyzer.preprocessing_config['feature_selection_params'] = {'threshold': threshold}
+        elif feature_selection == "correlation":
+            threshold = st.slider("Correlation threshold:", 0.7, 1.0, 0.95, 0.01)
+            analyzer.preprocessing_config['feature_selection_params'] = {'threshold': threshold}
+        elif feature_selection in ["kbest", "rfe"]:
+            k = st.slider("Number of features to select:", 1, min(20, len(analyzer.numerical_features)), 
+                         min(10, len(analyzer.numerical_features)))
+            param_name = 'k' if feature_selection == "kbest" else 'n_features'
+            analyzer.preprocessing_config['feature_selection_params'] = {param_name: k}
+        
+        if feature_selection != "none":
+            st.info(f"Feature selection: {feature_selection}")
+    
+    with tab4:
+        st.markdown("### Data Transformations")
+        data_transformation = st.selectbox(
+            "Data transformation method:",
+            ["none", "log", "boxcox"],
+            format_func=lambda x: {
+                "none": "No transformation",
+                "log": "Log transformation (log1p)",
+                "boxcox": "Box-Cox transformation"
+            }[x]
+        )
+        analyzer.preprocessing_config['data_transformation'] = data_transformation
+        if data_transformation != "none":
+            st.info(f"Transformation: {data_transformation}")
+    
+    with tab5:
+        st.markdown("### Feature Engineering")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            polynomial_features = st.checkbox("Add polynomial features", value=False)
+            analyzer.preprocessing_config['polynomial_features'] = polynomial_features
+            
+            if polynomial_features:
+                degree = st.slider("Polynomial degree:", 2, 3, 2)
+                if 'feature_selection_params' not in analyzer.preprocessing_config:
+                    analyzer.preprocessing_config['feature_selection_params'] = {}
+                analyzer.preprocessing_config['feature_selection_params']['poly_degree'] = degree
+        
+        with col2:
+            interaction_features = st.checkbox("Add interaction features", value=False)
+            analyzer.preprocessing_config['interaction_features'] = interaction_features
+        
+        if polynomial_features or interaction_features:
+            st.info("Feature engineering enabled")
+    
+    # Step 5: Set Dependent Variable Range
+    st.subheader("5. Set Dependent Variable Range")
+    
+    # Show current data statistics
+    current_min = data[dependent_var].min()
+    current_max = data[dependent_var].max()
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Current Minimum", f"{current_min:.2f}")
+    with col2:
+        st.metric("Current Maximum", f"{current_max:.2f}")
+    
+    st.markdown("""
+    <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px; margin: 15px 0; border: 1px solid rgba(255,255,255,0.1);">
+        <h4 style="color: #ffffff; margin: 0 0 10px 0;">Range Validation</h4>
+        <p style="color: #cccccc; margin: 0; font-size: 14px;">
+            Set a maximum realistic value for your dependent variable. This will prevent the model from making 
+            unrealistic predictions when given extreme input values. Predictions exceeding this limit will be 
+            automatically capped to the maximum value.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    max_value = st.number_input(
+        f"Maximum realistic value for {dependent_var}:",
+        min_value=float(current_min),
+        max_value=float(current_max * 10),  # Allow up to 10x current max
+        value=float(current_max),
+        step=0.01,
+        help="Enter the maximum realistic value your dependent variable can reach"
+    )
+    
+    # Store the range in the analyzer
+    analyzer.dependent_variable_range = max_value
+    
+    if max_value > current_max:
+        st.warning(f"⚠️ The maximum value ({max_value:.2f}) is higher than the current data maximum ({current_max:.2f}). This allows for future growth predictions.")
+    elif max_value < current_max:
+        st.warning(f"⚠️ The maximum value ({max_value:.2f}) is lower than the current data maximum ({current_max:.2f}). This will cap predictions to a more conservative range.")
+    else:
+        st.success(f"✅ Maximum range set to current data maximum: {max_value:.2f}")
+    
+    # Step 6: Train model
+    st.subheader("6. Train Model")
     if st.button("Train Linear Regression Model", type="primary"):
         if not hasattr(analyzer, 'dependent_variable') or analyzer.dependent_variable is None:
             st.error("Please select a dependent variable first.")
@@ -845,6 +1011,12 @@ def show_predictions_page():
                             new_data_with_predictions, predictions = result
                             st.success("Predictions completed!")
                             
+                            # Check if any predictions were capped
+                            if hasattr(analyzer, 'dependent_variable_range') and analyzer.dependent_variable_range:
+                                capped_count = sum(1 for pred in predictions if pred > analyzer.dependent_variable_range)
+                                if capped_count > 0:
+                                    st.warning(f"⚠️ {capped_count} prediction(s) were capped to the maximum range of {analyzer.dependent_variable_range:.2f}")
+                            
                             st.subheader("Prediction Results")
                             st.dataframe(new_data_with_predictions, use_container_width=True)
                             
@@ -903,12 +1075,32 @@ def show_predictions_page():
                             new_data_with_predictions, predictions = result
                             st.success("Prediction completed!")
                             
-                            st.markdown(f"""
-                            <div class="success-box">
-                                <h3>Prediction Result</h3>
-                                <h2>{analyzer.dependent_variable}: {predictions[0]:.2f}</h2>
-                            </div>
-                            """, unsafe_allow_html=True)
+                            # Check if prediction was capped
+                            original_prediction = predictions[0]
+                            if hasattr(analyzer, 'dependent_variable_range') and analyzer.dependent_variable_range:
+                                if original_prediction > analyzer.dependent_variable_range:
+                                    st.warning(f"⚠️ Prediction was capped from {original_prediction:.2f} to {analyzer.dependent_variable_range:.2f} due to range validation.")
+                                    st.markdown(f"""
+                                    <div class="success-box">
+                                        <h3>Prediction Result (Capped)</h3>
+                                        <h2>{analyzer.dependent_variable}: {analyzer.dependent_variable_range:.2f}</h2>
+                                        <p style="font-size: 14px; opacity: 0.8;">Original prediction: {original_prediction:.2f}</p>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                                else:
+                                    st.markdown(f"""
+                                    <div class="success-box">
+                                        <h3>Prediction Result</h3>
+                                        <h2>{analyzer.dependent_variable}: {predictions[0]:.2f}</h2>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                            else:
+                                st.markdown(f"""
+                                <div class="success-box">
+                                    <h3>Prediction Result</h3>
+                                    <h2>{analyzer.dependent_variable}: {predictions[0]:.2f}</h2>
+                                </div>
+                                """, unsafe_allow_html=True)
                         else:
                             st.error("Failed to make prediction.")
                     except Exception as e:

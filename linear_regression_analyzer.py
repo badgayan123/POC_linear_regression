@@ -7,10 +7,15 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler, Normalizer, PowerTransformer, OneHotEncoder
+from sklearn.feature_selection import VarianceThreshold, SelectKBest, f_regression, RFE
+from sklearn.ensemble import IsolationForest
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+from sklearn.impute import SimpleImputer, KNNImputer
+from scipy import stats
+from scipy.stats import zscore
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -28,7 +33,31 @@ class LinearRegressionAnalyzer:
         self.categorical_features = []
         self.numerical_features = []
         self.dependent_variable = None
+        self.dependent_variable_range = None  # Store min/max range for dependent variable
         
+        # Preprocessing configuration
+        self.preprocessing_config = {
+            'scaling_method': 'standard',  # 'standard', 'minmax', 'robust', 'normalizer', 'none'
+            'outlier_detection': 'iqr',    # 'iqr', 'zscore', 'isolation_forest', 'none'
+            'outlier_handling': 'remove',  # 'remove', 'cap', 'transform'
+            'feature_selection': 'none',   # 'variance', 'correlation', 'kbest', 'rfe', 'none'
+            'feature_selection_params': {},
+            'data_transformation': 'none', # 'log', 'boxcox', 'none'
+            'polynomial_features': False,  # Add polynomial features
+            'interaction_features': False, # Add interaction features
+            'advanced_missing_values': 'auto'  # 'auto', 'multiple_imputation', 'advanced'
+        }
+        
+        # Store preprocessing results
+        self.preprocessing_results = {
+            'outliers_detected': 0,
+            'outliers_handled': 0,
+            'features_selected': [],
+            'features_removed': [],
+            'transformation_applied': None,
+            'scaling_applied': None
+        }
+    
     def load_data(self, file_path):
         """Load data from Excel or CSV file"""
         try:
@@ -93,6 +122,63 @@ class LinearRegressionAnalyzer:
         # Identify numerical features
         self.numerical_features = [col for col in available_cols if col not in self.categorical_features]
         print(f"Numerical features: {self.numerical_features}")
+    
+    def set_dependent_variable_range(self):
+        """Ask user to set the maximum range for the dependent variable"""
+        print(f"\nSetting range for dependent variable: {self.dependent_variable}")
+        
+        # Show current data statistics
+        current_min = self.data[self.dependent_variable].min()
+        current_max = self.data[self.dependent_variable].max()
+        print(f"Current data range: {current_min:.2f} to {current_max:.2f}")
+        
+        while True:
+            try:
+                print("\nEnter the maximum value the dependent variable can realistically reach:")
+                print("(This will cap predictions to prevent unrealistic values)")
+                max_value = input("Maximum value (or press Enter to use current max): ").strip()
+                
+                if max_value == "":
+                    # Use current maximum from data
+                    self.dependent_variable_range = current_max
+                    print(f"Using current maximum: {self.dependent_variable_range:.2f}")
+                    break
+                else:
+                    max_value = float(max_value)
+                    if max_value >= current_max:
+                        self.dependent_variable_range = max_value
+                        print(f"Maximum range set to: {self.dependent_variable_range:.2f}")
+                        break
+                    else:
+                        print(f"Warning: The value {max_value:.2f} is less than the current maximum in your data ({current_max:.2f})")
+                        confirm = input("Are you sure you want to set a lower maximum? (y/n): ").strip().lower()
+                        if confirm == 'y':
+                            self.dependent_variable_range = max_value
+                            print(f"Maximum range set to: {self.dependent_variable_range:.2f}")
+                            break
+                        else:
+                            print("Please enter a new value.")
+            except ValueError:
+                print("Please enter a valid number.")
+    
+    def validate_prediction_range(self, predictions):
+        """Validate and cap predictions to the specified range"""
+        if self.dependent_variable_range is None:
+            return predictions
+        
+        # Convert to numpy array if it's not already
+        predictions_array = np.array(predictions)
+        
+        # Check if any predictions exceed the maximum
+        exceeded_max = predictions_array > self.dependent_variable_range
+        if np.any(exceeded_max):
+            print(f"\nWarning: {np.sum(exceeded_max)} prediction(s) exceeded the maximum range of {self.dependent_variable_range:.2f}")
+            print("These predictions have been capped to the maximum value.")
+            
+            # Cap the predictions
+            predictions_array[exceeded_max] = self.dependent_variable_range
+        
+        return predictions_array
     
     def handle_missing_values(self, method='auto'):
         """
@@ -387,15 +473,23 @@ class LinearRegressionAnalyzer:
             print("❌ KNN imputation not available. Falling back to mean imputation.")
             self._fill_missing_with_mean()
     
-    def preprocess_data(self, missing_method='auto'):
-        """Preprocess data with one-hot encoding for categorical variables"""
+    def preprocess_data(self, missing_method='auto', use_advanced_preprocessing=True):
+        """Preprocess data with advanced preprocessing options"""
         if self.data is None:
             print("No data loaded. Please load data first.")
             return False
         
+        # Store original shape for comparison
+        original_shape = self.data.shape
+        
         # Handle missing values first
-        print("🔍 Checking for missing values...")
+        print("Checking for missing values...")
         self.handle_missing_values(method=missing_method)
+        
+        # Apply advanced preprocessing if enabled
+        if use_advanced_preprocessing:
+            print("Applying advanced preprocessing pipeline...")
+            self.advanced_preprocessing_pipeline()
         
         # Separate features and target
         X = self.data.drop(columns=[self.dependent_variable])
@@ -404,13 +498,20 @@ class LinearRegressionAnalyzer:
         # Create preprocessing pipeline
         preprocessors = []
         
-        print(f"Debug: numerical_features = {self.numerical_features}")
-        print(f"Debug: categorical_features = {self.categorical_features}")
+        print(f"Numerical features: {self.numerical_features}")
+        print(f"Categorical features: {self.categorical_features}")
         
         if self.numerical_features:
-            numerical_transformer = Pipeline(steps=[
-                ('scaler', StandardScaler())
-            ])
+            # Get the appropriate scaler based on configuration
+            scaler = self.get_scaler(self.preprocessing_config['scaling_method'])
+            if scaler:
+                numerical_transformer = Pipeline(steps=[
+                    ('scaler', scaler)
+                ])
+            else:
+                # No scaling
+                numerical_transformer = Pipeline(steps=[])
+            
             preprocessors.append(('num', numerical_transformer, self.numerical_features))
         
         if self.categorical_features:
@@ -421,8 +522,6 @@ class LinearRegressionAnalyzer:
         
         # Always create a preprocessor - at minimum we'll have numerical features
         if not preprocessors:
-            # If no preprocessors were added, it means no features were identified
-            # This shouldn't happen, but let's handle it gracefully
             print("No features identified for preprocessing!")
             return False
             
@@ -460,14 +559,25 @@ class LinearRegressionAnalyzer:
                     cat_index = self.categorical_features.index(cat_feature)
                     self.categorical_categories[cat_feature] = cat_encoder.categories_[cat_index].tolist()
         
+        # Update preprocessing results
+        self.preprocessing_results['original_shape'] = original_shape
+        self.preprocessing_results['final_shape'] = self.data.shape
+        self.preprocessing_results['scaling_applied'] = self.preprocessing_config['scaling_method']
+        
         print(f"Data preprocessed successfully!")
+        print(f"Original shape: {original_shape}")
+        print(f"Final shape: {self.data.shape}")
         print(f"Training set shape: {self.X_train_processed.shape}")
         print(f"Test set shape: {self.X_test_processed.shape}")
+        print(f"Scaling method: {self.preprocessing_config['scaling_method']}")
         
         if self.categorical_features:
             print("\nCategorical feature categories:")
             for feature, categories in self.categorical_categories.items():
                 print(f"  {feature}: {categories}")
+        
+        # Print preprocessing summary
+        self.print_preprocessing_summary()
         
         return True
     
@@ -666,6 +776,9 @@ class LinearRegressionAnalyzer:
             # Make predictions
             predictions = self.model.predict(new_data_processed)
             
+            # Validate and cap predictions to the specified range
+            predictions = self.validate_prediction_range(predictions)
+            
             # Add predictions to the dataframe
             new_data_with_predictions = new_data.copy()
             new_data_with_predictions[f'{self.dependent_variable}_predicted'] = predictions
@@ -694,7 +807,8 @@ class LinearRegressionAnalyzer:
             'feature_names': self.feature_names,
             'dependent_variable': self.dependent_variable,
             'categorical_features': self.categorical_features,
-            'numerical_features': self.numerical_features
+            'numerical_features': self.numerical_features,
+            'dependent_variable_range': self.dependent_variable_range
         }
         joblib.dump(model_data, filepath)
         print(f"Model saved to {filepath}")
@@ -709,4 +823,343 @@ class LinearRegressionAnalyzer:
         self.dependent_variable = model_data['dependent_variable']
         self.categorical_features = model_data['categorical_features']
         self.numerical_features = model_data['numerical_features']
-        print(f"Model loaded from {filepath}") 
+        
+        # Load range information if available (for backward compatibility)
+        if 'dependent_variable_range' in model_data:
+            self.dependent_variable_range = model_data['dependent_variable_range']
+            print(f"Model loaded from {filepath}")
+            if self.dependent_variable_range:
+                print(f"Dependent variable range: {self.dependent_variable_range:.2f}")
+        else:
+            print(f"Model loaded from {filepath}")
+            print("Note: No range information found in saved model")
+    
+    # ==================== ADVANCED PREPROCESSING METHODS ====================
+    
+    def configure_preprocessing(self, **kwargs):
+        """Configure preprocessing options"""
+        for key, value in kwargs.items():
+            if key in self.preprocessing_config:
+                self.preprocessing_config[key] = value
+                print(f"Preprocessing configuration updated: {key} = {value}")
+            else:
+                print(f"Unknown preprocessing option: {key}")
+    
+    def detect_outliers(self, method='iqr'):
+        """Detect outliers using various methods"""
+        if self.data is None or not self.numerical_features:
+            print("No numerical data available for outlier detection.")
+            return {}
+        
+        outliers = {}
+        
+        # Only detect outliers on original numerical features (not engineered ones)
+        original_features = [f for f in self.numerical_features if '^' not in f and '_x_' not in f]
+        
+        for feature in original_features:
+            if feature in self.data.columns:  # Check if feature exists
+                data = self.data[feature].dropna()
+            
+            if method == 'iqr':
+                Q1 = data.quantile(0.25)
+                Q3 = data.quantile(0.75)
+                IQR = Q3 - Q1
+                lower_bound = Q1 - 1.5 * IQR
+                upper_bound = Q3 + 1.5 * IQR
+                outlier_indices = self.data[(self.data[feature] < lower_bound) | 
+                                          (self.data[feature] > upper_bound)].index
+                
+            elif method == 'zscore':
+                z_scores = np.abs(zscore(data))
+                outlier_indices = self.data[z_scores > 3].index
+                
+            elif method == 'isolation_forest':
+                iso_forest = IsolationForest(contamination=0.1, random_state=42)
+                outlier_labels = iso_forest.fit_predict(data.values.reshape(-1, 1))
+                outlier_indices = self.data[outlier_labels == -1].index
+                
+            else:
+                print(f"Unknown outlier detection method: {method}")
+                continue
+            
+            outliers[feature] = {
+                'indices': outlier_indices.tolist(),
+                'count': len(outlier_indices),
+                'percentage': len(outlier_indices) / len(self.data) * 100
+            }
+        
+        return outliers
+    
+    def handle_outliers(self, outliers, method='remove'):
+        """Handle detected outliers"""
+        if not outliers:
+            print("No outliers to handle.")
+            return
+        
+        total_outliers = sum(outlier_info['count'] for outlier_info in outliers.values())
+        print(f"Handling {total_outliers} outliers using method: {method}")
+        
+        if method == 'remove':
+            outlier_indices = set()
+            for feature, outlier_info in outliers.items():
+                outlier_indices.update(outlier_info['indices'])
+            
+            original_size = len(self.data)
+            self.data = self.data.drop(list(outlier_indices))
+            removed_count = original_size - len(self.data)
+            print(f"Removed {removed_count} rows containing outliers")
+            
+        elif method == 'cap':
+            for feature, outlier_info in outliers.items():
+                if outlier_info['count'] > 0:
+                    data = self.data[feature].dropna()
+                    Q1 = data.quantile(0.25)
+                    Q3 = data.quantile(0.75)
+                    IQR = Q3 - Q1
+                    lower_bound = Q1 - 1.5 * IQR
+                    upper_bound = Q3 + 1.5 * IQR
+                    
+                    # Cap outliers
+                    self.data[feature] = self.data[feature].clip(lower=lower_bound, upper=upper_bound)
+                    print(f"Capped outliers in {feature}")
+                    
+        elif method == 'transform':
+            for feature, outlier_info in outliers.items():
+                if outlier_info['count'] > 0:
+                    # Apply log transformation to reduce impact of outliers
+                    if self.data[feature].min() > 0:
+                        self.data[feature] = np.log1p(self.data[feature])
+                        print(f"Applied log transformation to {feature}")
+                    else:
+                        print(f"Cannot apply log transformation to {feature} (contains non-positive values)")
+        
+        self.preprocessing_results['outliers_detected'] = total_outliers
+        self.preprocessing_results['outliers_handled'] = total_outliers
+    
+    def select_features(self, method='none', **params):
+        """Perform feature selection"""
+        if not self.numerical_features:
+            print("No numerical features available for selection.")
+            return
+        
+        if method == 'variance':
+            # Remove low variance features
+            selector = VarianceThreshold(threshold=params.get('threshold', 0.01))
+            X_numerical = self.data[self.numerical_features]
+            selector.fit(X_numerical)
+            
+            selected_features = [self.numerical_features[i] for i in range(len(self.numerical_features)) 
+                               if selector.get_support()[i]]
+            removed_features = [f for f in self.numerical_features if f not in selected_features]
+            
+            self.numerical_features = selected_features
+            print(f"Variance-based feature selection: removed {len(removed_features)} features")
+            print(f"Removed features: {removed_features}")
+            
+        elif method == 'correlation':
+            # Remove highly correlated features
+            correlation_threshold = params.get('threshold', 0.95)
+            X_numerical = self.data[self.numerical_features]
+            corr_matrix = X_numerical.corr().abs()
+            
+            # Find highly correlated features
+            upper_tri = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+            to_drop = [column for column in upper_tri.columns if any(upper_tri[column] > correlation_threshold)]
+            
+            self.numerical_features = [f for f in self.numerical_features if f not in to_drop]
+            print(f"Correlation-based feature selection: removed {len(to_drop)} features")
+            print(f"Removed features: {to_drop}")
+            
+        elif method == 'kbest':
+            # Select k best features based on F-statistic
+            k = params.get('k', min(10, len(self.numerical_features)))
+            selector = SelectKBest(score_func=f_regression, k=k)
+            X_numerical = self.data[self.numerical_features]
+            y = self.data[self.dependent_variable]
+            
+            selector.fit(X_numerical, y)
+            selected_features = [self.numerical_features[i] for i in range(len(self.numerical_features)) 
+                               if selector.get_support()[i]]
+            
+            self.numerical_features = selected_features
+            print(f"K-best feature selection: selected {len(selected_features)} features")
+            
+        elif method == 'rfe':
+            # Recursive feature elimination
+            n_features = params.get('n_features', min(10, len(self.numerical_features)))
+            estimator = LinearRegression()
+            selector = RFE(estimator=estimator, n_features_to_select=n_features)
+            X_numerical = self.data[self.numerical_features]
+            y = self.data[self.dependent_variable]
+            
+            selector.fit(X_numerical, y)
+            selected_features = [self.numerical_features[i] for i in range(len(self.numerical_features)) 
+                               if selector.get_support()[i]]
+            
+            self.numerical_features = selected_features
+            print(f"RFE feature selection: selected {len(selected_features)} features")
+        
+        self.preprocessing_results['features_selected'] = self.numerical_features.copy()
+    
+    def transform_data(self, method='none'):
+        """Apply data transformations"""
+        if not self.numerical_features:
+            print("No numerical features available for transformation.")
+            return
+        
+        if method == 'log':
+            # Apply log transformation to numerical features
+            for feature in self.numerical_features:
+                if self.data[feature].min() > 0:
+                    self.data[feature] = np.log1p(self.data[feature])
+                    print(f"Applied log transformation to {feature}")
+                else:
+                    print(f"Cannot apply log transformation to {feature} (contains non-positive values)")
+            
+            self.preprocessing_results['transformation_applied'] = 'log'
+            
+        elif method == 'boxcox':
+            # Apply Box-Cox transformation
+            for feature in self.numerical_features:
+                if self.data[feature].min() > 0:
+                    transformed_data, lambda_param = stats.boxcox(self.data[feature])
+                    self.data[feature] = transformed_data
+                    print(f"Applied Box-Cox transformation to {feature} (lambda={lambda_param:.3f})")
+                else:
+                    print(f"Cannot apply Box-Cox transformation to {feature} (contains non-positive values)")
+            
+            self.preprocessing_results['transformation_applied'] = 'boxcox'
+    
+    def add_polynomial_features(self, degree=2):
+        """Add polynomial features"""
+        if not self.numerical_features:
+            print("No numerical features available for polynomial features.")
+            return
+        
+        from sklearn.preprocessing import PolynomialFeatures
+        
+        # Create polynomial features for numerical features only
+        X_numerical = self.data[self.numerical_features]
+        poly = PolynomialFeatures(degree=degree, include_bias=False)
+        poly_features = poly.fit_transform(X_numerical)
+        
+        # Create feature names for polynomial features
+        feature_names = poly.get_feature_names_out(self.numerical_features)
+        
+        # Add polynomial features to dataframe
+        new_features_added = []
+        for i, feature_name in enumerate(feature_names):
+            if feature_name not in self.data.columns:  # Avoid duplicates
+                self.data[feature_name] = poly_features[:, i]
+                new_features_added.append(feature_name)
+        
+        # Update numerical features list
+        self.numerical_features = [col for col in self.data.columns 
+                                 if col != self.dependent_variable and col not in self.categorical_features]
+        
+        print(f"Added polynomial features (degree {degree})")
+        print(f"New features added: {new_features_added}")
+    
+    def add_interaction_features(self):
+        """Add interaction features between numerical variables"""
+        if len(self.numerical_features) < 2:
+            print("Need at least 2 numerical features for interactions.")
+            return
+        
+        # Create interaction features
+        for i, feature1 in enumerate(self.numerical_features):
+            for feature2 in self.numerical_features[i+1:]:
+                interaction_name = f"{feature1}_x_{feature2}"
+                self.data[interaction_name] = self.data[feature1] * self.data[feature2]
+        
+        # Update numerical features list
+        self.numerical_features = [col for col in self.data.columns 
+                                 if col != self.dependent_variable and col not in self.categorical_features]
+        
+        print("Added interaction features between numerical variables")
+    
+    def get_scaler(self, method='standard'):
+        """Get the appropriate scaler based on method"""
+        if method == 'standard':
+            return StandardScaler()
+        elif method == 'minmax':
+            return MinMaxScaler()
+        elif method == 'robust':
+            return RobustScaler()
+        elif method == 'normalizer':
+            return Normalizer()
+        elif method == 'none':
+            return None
+        else:
+            print(f"Unknown scaling method: {method}. Using StandardScaler.")
+            return StandardScaler()
+    
+    def advanced_preprocessing_pipeline(self):
+        """Execute the complete advanced preprocessing pipeline"""
+        print("Starting advanced preprocessing pipeline...")
+        
+        # 1. Outlier detection and handling
+        if self.preprocessing_config['outlier_detection'] != 'none':
+            print(f"\nDetecting outliers using {self.preprocessing_config['outlier_detection']} method...")
+            outliers = self.detect_outliers(self.preprocessing_config['outlier_detection'])
+            if outliers:
+                self.handle_outliers(outliers, self.preprocessing_config['outlier_handling'])
+        
+        # 2. Data transformation
+        if self.preprocessing_config['data_transformation'] != 'none':
+            print(f"\nApplying {self.preprocessing_config['data_transformation']} transformation...")
+            self.transform_data(self.preprocessing_config['data_transformation'])
+        
+        # 3. Feature engineering
+        if self.preprocessing_config['polynomial_features']:
+            print("\nAdding polynomial features...")
+            degree = self.preprocessing_config['feature_selection_params'].get('poly_degree', 2)
+            self.add_polynomial_features(degree=degree)
+        
+        if self.preprocessing_config['interaction_features']:
+            print("\nAdding interaction features...")
+            self.add_interaction_features()
+        
+        # 4. Feature selection
+        if self.preprocessing_config['feature_selection'] != 'none':
+            print(f"\nPerforming {self.preprocessing_config['feature_selection']} feature selection...")
+            self.select_features(self.preprocessing_config['feature_selection'], 
+                               **self.preprocessing_config['feature_selection_params'])
+        
+        print("Advanced preprocessing pipeline completed!")
+        return True
+    
+    def get_preprocessing_summary(self):
+        """Get a summary of all preprocessing steps applied"""
+        summary = {
+            'original_shape': None,
+            'final_shape': self.data.shape if self.data is not None else None,
+            'numerical_features': len(self.numerical_features),
+            'categorical_features': len(self.categorical_features),
+            'preprocessing_config': self.preprocessing_config.copy(),
+            'preprocessing_results': self.preprocessing_results.copy()
+        }
+        
+        return summary
+    
+    def print_preprocessing_summary(self):
+        """Print a detailed summary of preprocessing steps"""
+        print("\n" + "="*60)
+        print("PREPROCESSING SUMMARY")
+        print("="*60)
+        
+        summary = self.get_preprocessing_summary()
+        
+        print(f"Data shape: {summary['final_shape']}")
+        print(f"Numerical features: {summary['numerical_features']}")
+        print(f"Categorical features: {summary['categorical_features']}")
+        
+        print(f"\nPreprocessing Configuration:")
+        for key, value in summary['preprocessing_config'].items():
+            print(f"  {key}: {value}")
+        
+        print(f"\nPreprocessing Results:")
+        for key, value in summary['preprocessing_results'].items():
+            print(f"  {key}: {value}")
+        
+        print("="*60) 

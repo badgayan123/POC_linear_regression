@@ -8,7 +8,15 @@ A comprehensive Python tool for performing linear regression analysis with Excel
 - **Multiple File Formats**: Support for Excel (.xlsx, .xls) and CSV files
 - **Interactive Variable Selection**: Choose dependent variable with case-insensitive input
 - **Categorical Feature Detection**: Automatic one-hot encoding for categorical variables
-- **Data Preprocessing**: Automatic scaling of numerical features
+- **Advanced Data Preprocessing**: Comprehensive preprocessing pipeline with multiple options
+
+### 🔧 Advanced Preprocessing Features
+- **Multiple Scaling Methods**: StandardScaler, MinMaxScaler, RobustScaler, Normalizer, or no scaling
+- **Outlier Detection & Handling**: IQR, Z-score, and Isolation Forest methods with remove/cap/transform options
+- **Feature Selection**: Variance threshold, correlation-based, K-best features, and Recursive Feature Elimination (RFE)
+- **Data Transformations**: Log transformation and Box-Cox transformation for skewed data
+- **Feature Engineering**: Polynomial features and interaction terms
+- **Missing Value Handling**: Advanced imputation strategies including KNN and auto-detection
 
 ### 📈 Comprehensive Metrics
 - **R² Score**: Coefficient of determination
@@ -28,6 +36,7 @@ A comprehensive Python tool for performing linear regression analysis with Excel
 - **New Data Prediction**: Load new files or enter data manually
 - **Model Persistence**: Save and load trained models
 - **Batch Prediction**: Predict multiple samples at once
+- **Range Validation**: Set maximum realistic values to prevent unrealistic predictions
 
 ## Installation
 
@@ -62,16 +71,29 @@ The tool will display all columns in your dataset. Enter the number correspondin
 #### Step 2: Identify Categorical Features
 Select which features are categorical (non-numeric). These will be automatically one-hot encoded.
 
-#### Step 3: Data Preprocessing
+#### Step 3: Set Dependent Variable Range
+Set a maximum realistic value for your dependent variable. This prevents the model from making unrealistic predictions when given extreme input values. Predictions exceeding this limit will be automatically capped.
+
+#### Step 4: Configure Advanced Preprocessing
+Configure advanced preprocessing options:
+- **Scaling**: Choose from StandardScaler, MinMaxScaler, RobustScaler, Normalizer, or no scaling
+- **Outlier Detection**: Select IQR, Z-score, or Isolation Forest methods
+- **Outlier Handling**: Choose to remove, cap, or transform outliers
+- **Feature Selection**: Apply variance threshold, correlation-based, K-best, or RFE selection
+- **Data Transformations**: Apply log or Box-Cox transformations
+- **Feature Engineering**: Add polynomial features and interaction terms
+
+#### Step 5: Data Preprocessing
 The tool automatically:
-- Scales numerical features
+- Applies configured preprocessing steps
+- Scales numerical features according to selection
 - Applies one-hot encoding to categorical features
 - Splits data into training (80%) and test (20%) sets
 
-#### Step 4: Model Training
+#### Step 6: Model Training
 Linear regression model is trained on the preprocessed data.
 
-#### Step 5: Metrics Calculation
+#### Step 7: Metrics Calculation
 Comprehensive evaluation metrics are calculated and displayed.
 
 ### 4. Visualization and Analysis
